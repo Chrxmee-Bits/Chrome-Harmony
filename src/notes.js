@@ -1,5 +1,3 @@
-// Note frequencies and duration calculator
-
 const NOTE_FREQUENCIES = {
   'C2': 65.41, 'Db2': 69.30, 'D2': 73.42, 'Eb2': 77.78, 'E2': 82.41,
   'F2': 87.31, 'Gb2': 92.50, 'G2': 98.00, 'Ab2': 103.83, 'A2': 110.00,
@@ -16,46 +14,33 @@ const NOTE_FREQUENCIES = {
   'C6': 1046.50,
 };
 
-function getFrequency(note) {
-  if (!note) return 440;
-  const freq = NOTE_FREQUENCIES[note];
-  if (!freq) {
-    console.warn(`Note not found: ${note}, defaulting to C4`);
-    return 261.63;
+function getFrequency(noteStr) {
+  if (!noteStr) return 440;
+  const microMatch = noteStr.match(/^([A-G][b]?\d)([+-]\d+)$/);
+  if (microMatch) {
+    const baseNote = microMatch[1];
+    const cents = parseInt(microMatch[2]);
+    const baseFreq = NOTE_FREQUENCIES[baseNote];
+    if (!baseFreq) return 261.63;
+    return baseFreq * Math.pow(2, cents / 1200);
   }
+  const freq = NOTE_FREQUENCIES[noteStr];
+  if (!freq) return 261.63;
   return freq;
 }
 
 function getDuration(durationStr, bpm) {
-  if (!durationStr) return secondsFromBeats(0.25, bpm); // default sixteenth
-
-  // Grid-based: line:N
-  if (durationStr.startsWith('line:')) {
-    const lines = parseFloat(durationStr.split(':')[1]);
-    return lines * 0.01;
-  }
-
-  // Grid-based: hold:N (seconds)
-  if (durationStr.startsWith('hold:')) {
-    return parseFloat(durationStr.split(':')[1]);
-  }
-
-  // Musical durations
-  const durations = {
-    'whole': 4,
-    'half': 2,
-    'quarter': 1,
-    'eighth': 0.5,
-    'sixteenth': 0.25,
-    'thirtysecond': 0.125,
-  };
-
-  const beats = durations[durationStr] || 0.25;
-  return secondsFromBeats(beats, bpm);
-}
-
-function secondsFromBeats(beats, bpm) {
+  if (!durationStr) return (0.25 / bpm) * 60;
+  if (durationStr.startsWith('line:')) return parseFloat(durationStr.split(':')[1]) * 0.01;
+  if (durationStr.startsWith('hold:')) return parseFloat(durationStr.split(':')[1]);
+  const map = { 'whole': 4, 'half': 2, 'quarter': 1, 'eighth': 0.5, 'sixteenth': 0.25, 'thirtysecond': 0.125 };
+  const beats = map[durationStr] || 0.25;
   return (beats / bpm) * 60;
 }
 
-module.exports = { getFrequency, getDuration, NOTE_FREQUENCIES };
+function durationToBeats(duration) {
+  const map = { 'whole': 4, 'half': 2, 'quarter': 1, 'eighth': 0.5, 'sixteenth': 0.25, 'thirtysecond': 0.125 };
+  return map[duration] || 0.25;
+}
+
+module.exports = { getFrequency, getDuration, durationToBeats, NOTE_FREQUENCIES };

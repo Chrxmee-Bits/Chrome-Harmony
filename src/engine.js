@@ -1,5 +1,3 @@
-// Chrome Harmony Engine — ties everything together
-
 const parser = require('./parser');
 const notes = require('./notes');
 const instruments = require('./instruments');
@@ -18,25 +16,53 @@ class ChromeHarmonyEngine {
     const duration = this.calculateDuration(parsed);
     const totalSamples = Math.ceil(duration * this.sampleRate);
     const masterBuffer = new Float32Array(totalSamples);
-
-    // Process grid events (absolute time)
-    for (const event of parsed.gridEvents) {
-      const sampleOffset = Math.floor(event.time * this.sampleRate);
-      for (const sound of event.sounds) {
-        this.renderSound(masterBuffer, sound, sampleOffset, parsed.header.tempo);
-      }
-    }
-
-    // Process musical events (beat-based)
     const secondsPerBeat = 60 / (parsed.header.tempo || 140);
-    for (const event of parsed.musicalEvents) {
-      const sampleOffset = Math.floor(event.beat * secondsPerBeat * this.sampleRate);
-      for (const sound of event.sounds) {
-        this.renderSound(masterBuffer, sound, sampleOffset, parsed.header.tempo);
+
+    // Collect kick events for sidechain
+    const kickEvents = [];
+
+    // Process each track
+    for (const [trackName, trackData] of Object.entries(parsed.tracks)) {
+      let currentBeat = 0;
+      
+      for (const event of trackData.events) {
+        // Grid time
+        if (event.time !== null && event.time !== undefined) {
+          const sampleOffset = Math.floor(event.time * this.sampleRate);
+          for (const sound of event.sounds) {
+            this.renderSound(masterBuffer, sound, sampleOffset, parsed.header.tempo);
+            if (sound.instrument && sound.instrument.toLowerCase().includes('kick')) {
+              kickEvents.push({ time: event.time });
+            }
+          }
+          continue;
+        }
+
+        // Musical time
+        if (event.beat !== null && event.beat !== undefined) {
+          const sampleOffset = Math.floor(event.beat * secondsPerBeat * this.sampleRate);
+          for (const sound of event.sounds) {
+            this.renderSound(masterBuffer, sound, sampleOffset, parsed.header.tempo);
+            if (sound.instrument && sound.instrument.toLowerCase().includes('kick')) {
+              kickEvents.push({ time: event.beat * secondsPerBeat });
+            }
+          }
+        }
       }
     }
 
-    // Normalize and write
+    // Apply sidechain to tracks that request it
+    for (const [trackName, trackData] of Object.entries(parsed.tracks)) {
+      if (trackData.sidechain && kickEvents.length > 0) {
+        // Apply sidechain ducking to the whole master for now
+        const ducked = envelopes.sidechain(masterBuffer, kickEvents, this.sampleRate);
+        for (let i = 0; i < masterBuffer.length; i++) {
+          masterBuffer[i] = ducked[i];
+        }
+        break; // Only apply once
+      }
+    }
+
     const final = mixer.normalize(masterBuffer);
     const outPath = outputPath || chFilePath.replace('.ch', '.wav');
     wavWriter.write(outPath, final, this.sampleRate);
@@ -46,43 +72,44 @@ class ChromeHarmonyEngine {
   renderSound(masterBuffer, sound, sampleOffset, tempo) {
     const freq = notes.getFrequency(sound.note);
     const dur = notes.getDuration(sound.duration || 'quarter', tempo);
-    const raw = instruments.generate(sound.instrument, freq, dur, this.sampleRate);
-    
-    // Apply envelope (kills the hum)
+    const glideFrom = sound.glideFrom ? notes.getFrequency(sound.glideFrom) : null;
+    const raw = instruments.generate(sound.instrument, freq, dur, this.sampleRate, glideFrom);
+
     let processed;
-    if (['pad'].includes(sound.instrument?.toLowerCase())) {
+    if (['pad', 'paddark'].includes(sound.instrument?.toLowerCase())) {
       processed = envelopes.adsr(raw, 0.05, 0.1, 0.7, 0.2, this.sampleRate);
     } else {
       processed = envelopes.apply(raw, 0.003, 0.04, this.sampleRate);
     }
-    
-    // Apply effects
+
     if (sound.effects && Object.keys(sound.effects).length > 0) {
       processed = effects.apply(processed, sound.effects, this.sampleRate);
     }
-    
-    // Mix into master
+
     mixer.mixInto(masterBuffer, processed, sampleOffset);
   }
 
   calculateDuration(parsed) {
     let maxTime = 0;
-    
-    for (const e of parsed.gridEvents) {
-      if (e.time > maxTime) maxTime = e.time;
-    }
-    
     const secondsPerBeat = 60 / (parsed.header.tempo || 140);
-    for (const e of parsed.musicalEvents) {
-      const t = (e.beat + 1) * secondsPerBeat;
-      if (t > maxTime) maxTime = t;
+
+    for (const trackData of Object.values(parsed.tracks)) {
+      for (const event of trackData.events) {
+        if (event.time !== null && event.time !== undefined) {
+          if (event.time > maxTime) maxTime = event.time;
+        }
+        if (event.beat !== null && event.beat !== undefined) {
+          const t = (event.beat + 1) * secondsPerBeat;
+          if (t > maxTime) maxTime = t;
+        }
+      }
     }
-    
-    for (const v of parsed.vocalSpans) {
+
+    for (const v of parsed.vocalSpans || []) {
       if (v.end > maxTime) maxTime = v.end;
     }
-    
-    return maxTime + 0.1; // small tail
+
+    return maxTime + 0.5;
   }
 }
 
