@@ -1,0 +1,16 @@
+{
+  "name": "chrome-harmony",
+  "version": "1.0.0",
+  "description": "Chrome Harmony - An audio-first language. Write audio, export audio. A local DAW in text.",
+  "main": "src/engine.js",
+  "bin": {
+    "chrome-harmony": "./bin/chrome-harmony.js"
+  },
+  "scripts": {
+    "render": "node bin/chrome-harmony.js render",
+    "profile": "node bin/chrome-harmony.js profile",
+    "preset": "node bin/chrome-harmony.js preset"
+  },
+  "keywords": ["audio", "language", "DAW", "synthesizer", "chrome-harmony"],
+  "license": "MIT"
+}
