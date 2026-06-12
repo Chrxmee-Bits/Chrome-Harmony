@@ -1,169 +1,210 @@
+// src/engine.js
 const fs = require('fs');
 const path = require('path');
-const LANGUAGE = require('./language');
-const ProfileManager = require('./profiles');
-const PresetManager = require('./presets');
 
 class ChromeHarmonyEngine {
-  constructor(options = {}) {
-    this.sampleRate = options.sampleRate || 44100;
-    this.bitDepth = options.bitDepth || 16;
-    this.profiles = new ProfileManager();
-    this.presets = new PresetManager();
+  constructor() {
+    this.sampleRate = 44100;
+    this.notes = {
+      'C2': 65.41, 'Db2': 69.30, 'D2': 73.42, 'Eb2': 77.78, 'E2': 82.41,
+      'F2': 87.31, 'Gb2': 92.50, 'G2': 98.00, 'Ab2': 103.83, 'A2': 110.00,
+      'Bb2': 116.54, 'B2': 123.47,
+      'C3': 130.81, 'Db3': 138.59, 'D3': 146.83, 'Eb3': 155.56, 'E3': 164.81,
+      'F3': 174.61, 'Gb3': 185.00, 'G3': 196.00, 'Ab3': 207.65, 'A3': 220.00,
+      'Bb3': 233.08, 'B3': 246.94,
+      'C4': 261.63, 'Db4': 277.18, 'D4': 293.66, 'Eb4': 311.13, 'E4': 329.63,
+      'F4': 349.23, 'Gb4': 369.99, 'G4': 392.00, 'Ab4': 415.30, 'A4': 440.00,
+      'Bb4': 466.16, 'B4': 493.88,
+      'C5': 523.25, 'D5': 587.33, 'E5': 659.25, 'G5': 783.99, 'A5': 880.00,
+    };
   }
-  
-  // Parse a .ch file into sections
+
   parseChFile(filePath) {
     const content = fs.readFileSync(filePath, 'utf-8');
     return this.parseChString(content);
   }
-  
-  // Parse .ch content string
+
   parseChString(content) {
-    const sections = {};
+    const clean = content.replace(/\/\/.*$/gm, '');
+    const header = this.parseSection(clean, 'HEADER');
+    const score = this.parseSection(clean, 'SCORE');
     
-    // Extract sections
-    const headerMatch = content.match(/\[HEADER\]([\s\S]*?)\[\/HEADER\]/);
-    const voicesMatch = content.match(/\[VOICES\]([\s\S]*?)\[\/VOICES\]/);
-    const presetsMatch = content.match(/\[PRESETS\]([\s\S]*?)\[\/PRESETS\]/);
-    const importsMatch = content.match(/\[IMPORTS\]([\s\S]*?)\[\/IMPORTS\]/);
-    const scoreMatch = content.match(/\[SCORE\]([\s\S]*?)\[\/SCORE\]/);
-    
-    sections.header = headerMatch ? this.parseHeader(headerMatch[1]) : {};
-    sections.voices = voicesMatch ? this.parseVoices(voicesMatch[1]) : {};
-    sections.presets = presetsMatch ? this.parsePresets(presetsMatch[1]) : {};
-    sections.imports = importsMatch ? this.parseImports(importsMatch[1]) : [];
-    sections.score = scoreMatch ? this.parseScore(scoreMatch[1]) : [];
-    
-    return sections;
+    return {
+      header: this.parseHeaderBlock(header),
+      score: this.parseScoreBlock(score),
+    };
   }
-  
-  parseHeader(text) {
-    const header = {};
-    const lines = text.trim().split('\n').filter(l => l.trim());
+
+  parseSection(content, sectionName) {
+    const regex = new RegExp(`\\[${sectionName}\\]([\\s\\S]*?)\\[\\/${sectionName}\\]`, 'i');
+    const match = content.match(regex);
+    return match ? match[1].trim() : '';
+  }
+
+  parseHeaderBlock(text) {
+    const header = { bpm: 140, audio_note: 'none' };
+    if (!text) return header;
+    const lines = text.split('\n').filter(l => l.trim());
     for (const line of lines) {
-      const colonIndex = line.indexOf(':');
-      if (colonIndex === -1) continue;
-      const key = line.substring(0, colonIndex).trim();
-      let value = line.substring(colonIndex + 1).trim();
-      // Convert numbers
-      if (!isNaN(value) && value !== '') value = Number(value);
+      const colonIdx = line.indexOf(':');
+      if (colonIdx === -1) continue;
+      const key = line.substring(0, colonIdx).trim();
+      let value = line.substring(colonIdx + 1).trim();
+      if (!isNaN(value)) value = Number(value);
       header[key] = value;
     }
     return header;
   }
-  
-  parseVoices(text) {
-    const voices = {};
-    // Parse voice profile definitions
-    return voices;
-  }
-  
-  parsePresets(text) {
-    const presets = {};
-    return presets;
-  }
-  
-  parseImports(text) {
-    const imports = [];
-    const lines = text.trim().split('\n').filter(l => l.trim());
-    for (const line of lines) {
-      if (line.startsWith('import:')) {
-        imports.push(this.parseImportLine(line));
-      }
-    }
-    return imports;
-  }
-  
-  parseImportLine(line) {
-    const importData = {};
-    const parts = line.substring(7).split(/\s+/); // Remove "import:"
-    for (const part of parts) {
-      const [key, value] = part.split(':');
-      if (key && value) {
-        importData[key] = isNaN(value) ? value : Number(value);
-      }
-    }
-    return importData;
-  }
-  
-  parseScore(text) {
-    const lines = text.trim().split('\n');
+
+  parseScoreBlock(text) {
     const events = [];
-    
+    const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line || line.startsWith('//')) continue;
-      
-      const time = i * LANGUAGE.timeline.secondsPerLine;
       events.push({
         line: i,
-        time: time,
+        time: i * 0.01, // 100 lines = 1 second
         content: line,
       });
     }
-    
     return events;
   }
-  
-  // Render parsed content to audio buffer
+
+  // Generate a tone
+  generateTone(freq, duration, type = 'bass') {
+    const numSamples = Math.floor(duration * this.sampleRate);
+    const samples = new Float32Array(numSamples);
+    
+    for (let i = 0; i < numSamples; i++) {
+      const t = i / this.sampleRate;
+      const envelope = Math.exp(-t * 3); // Decay
+      
+      let sample = 0;
+      
+      switch(type) {
+        case 'bass':
+          // Sub bass - sine wave with slight saturation
+          sample = Math.sin(2 * Math.PI * freq * t);
+          sample += Math.sin(2 * Math.PI * freq * 2 * t) * 0.3; // Harmonic
+          sample += Math.sin(2 * Math.PI * freq * 3 * t) * 0.1;
+          sample *= envelope * 0.8;
+          break;
+          
+        case 'chime':
+          // Bell-like tone with harmonics
+          sample = Math.sin(2 * Math.PI * freq * t);
+          sample += Math.sin(2 * Math.PI * freq * 2.76 * t) * 0.5;
+          sample += Math.sin(2 * Math.PI * freq * 5.4 * t) * 0.25;
+          sample *= Math.exp(-t * 4) * 0.6;
+          break;
+          
+        case 'kick':
+          // Kick drum - pitch sweep down
+          const kickFreq = freq * Math.exp(-t * 40);
+          sample = Math.sin(2 * Math.PI * kickFreq * t);
+          sample *= Math.exp(-t * 8) * 0.9;
+          break;
+          
+        case 'snare':
+          // Snare - noise + tone
+          sample = Math.sin(2 * Math.PI * 200 * t) * Math.exp(-t * 15) * 0.3;
+          sample += (Math.random() * 2 - 1) * Math.exp(-t * 10) * 0.5;
+          break;
+          
+        case 'hihat':
+          // Hi-hat - filtered noise
+          sample = (Math.random() * 2 - 1) * Math.exp(-t * 40) * 0.3;
+          break;
+      }
+      
+      samples[i] = sample;
+    }
+    
+    return samples;
+  }
+
+  // Parse a line like [Bass: C2] or [Chime: G4] or [(Bass C2) (Chime G4)]
+  parseLine(content) {
+    const sounds = [];
+    
+    // Match [Instrument: Note] or [Instrument Note]
+    const singleRegex = /\[(\w+):\s*(\w+)\]/g;
+    let match;
+    while ((match = singleRegex.exec(content)) !== null) {
+      sounds.push({
+        instrument: match[1].toLowerCase(),
+        note: match[2],
+      });
+    }
+    
+    // Match [(Instrument Note)] stacked format
+    const stackRegex = /\((\w+)\s+(\w+)\)/g;
+    while ((match = stackRegex.exec(content)) !== null) {
+      sounds.push({
+        instrument: match[1].toLowerCase(),
+        note: match[2],
+      });
+    }
+    
+    return sounds;
+  }
+
   render(parsed) {
-    const duration = this.calculateDuration(parsed.score);
+    const duration = parsed.score.length * 0.01;
     const totalSamples = Math.floor(duration * this.sampleRate);
     const buffer = new Float32Array(totalSamples);
     
-    // Process each score event
     for (const event of parsed.score) {
-      const samples = this.renderEvent(event, parsed);
-      const startSample = Math.floor(event.time * this.sampleRate);
+      const sounds = this.parseLine(event.content);
       
-      // Mix into buffer
-      for (let i = 0; i < samples.length && (startSample + i) < totalSamples; i++) {
-        buffer[startSample + i] += samples[i];
+      for (const sound of sounds) {
+        const freq = this.notes[sound.note];
+        if (!freq) continue;
+        
+        const soundDuration = this.getSoundDuration(sound.instrument);
+        const samples = this.generateTone(freq, soundDuration, sound.instrument);
+        
+        const startSample = Math.floor(event.time * this.sampleRate);
+        
+        for (let i = 0; i < samples.length && (startSample + i) < totalSamples; i++) {
+          buffer[startSample + i] += samples[i];
+        }
       }
     }
     
     return this.normalize(buffer);
   }
-  
-  calculateDuration(score) {
-    if (score.length === 0) return 0;
-    const lastEvent = score[score.length - 1];
-    return lastEvent.time + 0.1; // Add small tail
+
+  getSoundDuration(instrument) {
+    switch(instrument) {
+      case 'bass': return 0.3;
+      case 'chime': return 0.5;
+      case 'kick': return 0.2;
+      case 'snare': return 0.15;
+      case 'hihat': return 0.05;
+      default: return 0.2;
+    }
   }
-  
-  renderEvent(event, parsed) {
-    const duration = 0.1; // Placeholder
-    const numSamples = Math.floor(duration * this.sampleRate);
-    const samples = new Float32Array(numSamples);
-    
-    // Parse the event content and generate audio
-    // This is the core synthesis engine — to be fully built out
-    
-    return samples;
-  }
-  
+
   normalize(buffer) {
-    let maxAmp = 0;
+    let max = 0;
     for (let i = 0; i < buffer.length; i++) {
       const abs = Math.abs(buffer[i]);
-      if (abs > maxAmp) maxAmp = abs;
+      if (abs > max) max = abs;
     }
-    
-    if (maxAmp > 0.95) {
-      const scale = 0.95 / maxAmp;
+    if (max > 0.95) {
+      const scale = 0.95 / max;
       for (let i = 0; i < buffer.length; i++) {
         buffer[i] *= scale;
       }
     }
-    
     return buffer;
   }
-  
-  // Write buffer to WAV file
+
   writeWAV(filePath, buffer) {
     const numChannels = 1;
-    const bitsPerSample = this.bitDepth;
+    const bitsPerSample = 16;
     const byteRate = this.sampleRate * numChannels * bitsPerSample / 8;
     const blockAlign = numChannels * bitsPerSample / 8;
     const dataSize = buffer.length * blockAlign;
@@ -172,26 +213,20 @@ class ChromeHarmonyEngine {
     
     const header = Buffer.alloc(headerSize);
     
-    // RIFF header
     header.write('RIFF', 0);
     header.writeUInt32LE(fileSize - 8, 4);
     header.write('WAVE', 8);
-    
-    // fmt chunk
     header.write('fmt ', 12);
-    header.writeUInt32LE(16, 16); // chunk size
-    header.writeUInt16LE(1, 20);  // PCM format
+    header.writeUInt32LE(16, 16);
+    header.writeUInt16LE(1, 20);
     header.writeUInt16LE(numChannels, 22);
     header.writeUInt32LE(this.sampleRate, 24);
     header.writeUInt32LE(byteRate, 28);
     header.writeUInt16LE(blockAlign, 32);
     header.writeUInt16LE(bitsPerSample, 34);
-    
-    // data chunk
     header.write('data', 36);
     header.writeUInt32LE(dataSize, 40);
     
-    // Convert float to int16
     const intBuffer = Buffer.alloc(dataSize);
     for (let i = 0; i < buffer.length; i++) {
       const sample = Math.max(-1, Math.min(1, buffer[i]));
@@ -199,31 +234,16 @@ class ChromeHarmonyEngine {
       intBuffer.writeInt16LE(intSample, i * 2);
     }
     
-    // Write file
     const output = Buffer.concat([header, intBuffer]);
     fs.writeFileSync(filePath, output);
     return filePath;
   }
-  
-  // Write buffer to MP3 (placeholder — would use a proper encoder)
-  writeMP3(filePath, buffer) {
-    // Would use lame or similar encoder
-    // For now, write WAV and note that MP3 encoding requires additional dependency
-    const wavPath = filePath.replace('.mp3', '.wav');
-    this.writeWAV(wavPath, buffer);
-    return wavPath;
-  }
-  
-  // Render a .ch file to audio
+
   renderFile(chFilePath, outputPath) {
     const parsed = this.parseChFile(chFilePath);
     const buffer = this.render(parsed);
-    
-    const ext = path.extname(outputPath || '.wav').toLowerCase();
-    if (ext === '.mp3') {
-      return this.writeMP3(outputPath, buffer);
-    }
-    return this.writeWAV(outputPath || chFilePath.replace('.ch', '.wav'), buffer);
+    const outPath = outputPath || chFilePath.replace('.ch', '.wav');
+    return this.writeWAV(outPath, buffer);
   }
 }
 
