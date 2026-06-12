@@ -12,5 +12,5 @@
     "preset": "node bin/chrome-harmony.js preset"
   },
   "keywords": ["audio", "language", "DAW", "synthesizer", "chrome-harmony"],
-  "license": "MIT"
+  "license": "Apache-2.0"
 }
